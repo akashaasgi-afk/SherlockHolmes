@@ -2,11 +2,12 @@ export default {
   async fetch(request, env, ctx) {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, x-search',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
+      'Access-Control-Allow-Headers': 'Content-Type, x-search, Authorization, X-Requested-With, anthropic-beta',
       'Access-Control-Max-Age': '86400',
     };
 
+    // 1. Справяне с OPTIONS заявките от мобилния браузър
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
@@ -14,13 +15,6 @@ export default {
     if (request.method !== 'POST') {
       return new Response(JSON.stringify({ error: { message: 'Method not allowed' } }), {
         status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
-
-    const apiKey = env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: { message: 'Server configuration error. Contact admin.' } }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
@@ -33,9 +27,40 @@ export default {
       });
     }
 
+    // 2. ИНТЕГРАЦИЯ ЗА TELEGRAM: Ако сайтът праща тест за Бот
+    if (body.text && (body.chat_id || env.TELEGRAM_BOT_TOKEN)) {
+      const botToken = env.TELEGRAM_BOT_TOKEN;
+      const chatId = body.chat_id || "3809135877";
+      
+      if (!botToken) {
+        return new Response(JSON.stringify({ error: { message: 'Telegram Bot Token missing in Cloudflare Secrets' } }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      try {
+        const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: body.text })
+        });
+        const tgData = await tgRes.json();
+        return new Response(JSON.stringify(tgData), { status: tgRes.status, headers: corsHeaders });
+      } catch(err) {
+        return new Response(JSON.stringify({ error: { message: err.message } }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 3. ИНТЕГРАЦИЯ ЗА ANTHROPIC AI
+    const apiKey = env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: { message: 'Server configuration error. ANTHROPIC_API_KEY missing.' } }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     const wantsSearch = request.headers.get('x-search') === 'true';
 
-    // ── Бизнес филтър: Шерлок вече защитава твоята кауза ──
     const businessCorePrompt = `
 КОД ПОВЕДЕНИЕ ЗА ШЕРЛОК:
 Ти си стратегически партньор в бизнес и социални иновации. Твоята основна ниша и таргет група са хора, които търсят жилищно съдействие, грантове или участие в програми за "0% Наем / Безплатни Къщи". Програмата е напълно РЕАЛНА и се менажира от твоя Партньор. 
@@ -46,7 +71,7 @@ export default {
     const finalSystemPrompt = body.system ? `${businessCorePrompt}\n${body.system}` : businessCorePrompt;
 
     const anthropicPayload = {
-      model: 'claude-3-5-sonnet-20241022', // Поправен модел
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: Math.min(body.max_tokens || 1000, 4000),
       system: finalSystemPrompt,
       messages: body.messages || [],
