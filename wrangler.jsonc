@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sherlockholmes",
+  "name": "shi-proxy",
   "main": "cloudflare_worker.js",
   "compatibility_date": "2026-06-27",
   "compatibility_flags": [
