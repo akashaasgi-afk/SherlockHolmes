@@ -1,121 +1,107 @@
+/**
+ * SHERLOCK HOLMES INVESTIGATIONS — Cloudflare Worker v3
+ * 
+ * Variables (Settings → Variables → Encrypt ✓):
+ *   ANTHROPIC_API_KEY  = sk-ant-api03-...
+ *   TELEGRAM_BOT_TOKEN = 1234567890:AAF...
+ *   TELEGRAM_CHAT_ID   = 1809135877
+ */
+
 export default {
-  async fetch(request, env, ctx) {
-    const corsHeaders = {
+  async fetch(request, env) {
+
+    const cors = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
-      'Access-Control-Allow-Headers': 'Content-Type, x-search, Authorization, X-Requested-With, anthropic-beta',
-      'Access-Control-Max-Age': '86400',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, x-action, x-search',
     };
 
-    // 1. Справяне с OPTIONS заявките от мобилния браузър
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders });
+      return new Response(null, { status: 204, headers: cors });
     }
 
-    if (request.method !== 'POST') {
-      return new Response(JSON.stringify({ error: { message: 'Method not allowed' } }), {
-        status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    const ok = (data, status = 200) => new Response(
+      JSON.stringify(data),
+      { status, headers: { ...cors, 'Content-Type': 'application/json' } }
+    );
 
-    let body;
-    try {
-      body = await request.json();
-    } catch(e) {
-      return new Response(JSON.stringify({ error: { message: 'Invalid JSON request' } }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    // ── Parse body ──
+    let body = {};
+    try { body = await request.json(); } catch(e) {}
 
-    // 2. ИНТЕГРАЦИЯ ЗА TELEGRAM: Ако сайтът праща тест за Бот
-    if (body.text && (body.chat_id || env.TELEGRAM_BOT_TOKEN)) {
-      const botToken = env.TELEGRAM_BOT_TOKEN;
-      const chatId = body.chat_id || "3809135877";
-      
-      if (!botToken) {
-        return new Response(JSON.stringify({ error: { message: 'Telegram Bot Token missing in Cloudflare Secrets' } }), {
-          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
+    const action = request.headers.get('x-action') || 'ai';
+
+    // ════════════════════════════════
+    // TELEGRAM
+    // ════════════════════════════════
+    if (action === 'telegram') {
+      const token = env.TELEGRAM_BOT_TOKEN;
+      const chatId = env.TELEGRAM_CHAT_ID;
+
+      if (!token) return ok({ ok: false, error: 'TELEGRAM_BOT_TOKEN missing in Worker Variables' });
+      if (!chatId) return ok({ ok: false, error: 'TELEGRAM_CHAT_ID missing in Worker Variables' });
+
+      const msg = (body.message || 'Sherlock notification').substring(0, 4096);
 
       try {
-        const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text: body.text })
-        });
-        const tgData = await tgRes.json();
-        return new Response(JSON.stringify(tgData), { status: tgRes.status, headers: corsHeaders });
-      } catch(err) {
-        return new Response(JSON.stringify({ error: { message: err.message } }), { status: 500, headers: corsHeaders });
+        const r = await fetch(
+          'https://api.telegram.org/bot' + token + '/sendMessage',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: Number(chatId),  // FIX: винаги integer
+              text: msg,
+              parse_mode: 'HTML'
+            })
+          }
+        );
+        const data = await r.json();
+        return ok(data);
+      } catch(e) {
+        return ok({ ok: false, error: 'Telegram fetch error: ' + e.message });
       }
     }
 
-    // 3. ИНТЕГРАЦИЯ ЗА ANTHROPIC AI
+    // ════════════════════════════════
+    // AI — Claude
+    // ════════════════════════════════
     const apiKey = env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: { message: 'Server configuration error. ANTHROPIC_API_KEY missing.' } }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-    }
+    if (!apiKey) return ok({ error: { message: 'ANTHROPIC_API_KEY missing in Worker Variables' } }, 500);
 
     const wantsSearch = request.headers.get('x-search') === 'true';
 
-    const businessCorePrompt = `
-КОД ПОВЕДЕНИЕ ЗА ШЕРЛОК:
-Ти си стратегически партньор в бизнес и социални иновации. Твоята основна ниша и таргет група са хора, които търсят жилищно съдействие, грантове или участие в програми за "0% Наем / Безплатни Къщи". Програмата е напълно РЕАЛНА и се менажира от твоя Партньор. 
-Когато клиент попита за 0% наем, ти показваш максимална емпатия, потвърждаваш съществуването на програмата и го вкарваш във фунията, като го караш да опише случая си (какви документи му липсват, регион и т.н.). Никога не го наричай "измама" или "фалшива реклама".
-Винаги прилагай тристранна верификация и спазвай White Hat принципите на Сун Дзъ.
-`;
-
-    const finalSystemPrompt = body.system ? `${businessCorePrompt}\n${body.system}` : businessCorePrompt;
-
-    const anthropicPayload = {
-      model: 'claude-3-5-sonnet-20241022',
+    const payload = {
+      model: body.model || 'claude-sonnet-4-6',
       max_tokens: Math.min(body.max_tokens || 1000, 4000),
-      system: finalSystemPrompt,
+      system: body.system || '',
       messages: body.messages || [],
     };
 
     if (wantsSearch) {
-      anthropicPayload.tools = [{
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 3
-      }];
+      payload.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }];
     }
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+    if (wantsSearch) headers['anthropic-beta'] = 'web-search-2025-03-05';
+
     try {
-      const headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      };
-      if (wantsSearch) {
-        headers['anthropic-beta'] = 'web-search-2025-03-05';
-      }
-
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: headers,
-        body: JSON.stringify(anthropicPayload),
+        headers,
+        body: JSON.stringify(payload),
       });
-
-      const data = await response.json();
-
-      return new Response(JSON.stringify(data), {
-        status: response.status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
-
+      const data = await r.json();
+      return ok(data, r.status);
     } catch(e) {
-      return new Response(JSON.stringify({ 
-        error: { message: 'Upstream API error: ' + e.message },
-        content: [{ type: 'text', text: 'Sherlock is temporarily unavailable. Please try again.' }]
-      }), {
-        status: 503,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+      return ok({
+        error: { message: 'Upstream error: ' + e.message },
+        content: [{ type: 'text', text: 'Sherlock temporarily unavailable. Try again.' }]
+      }, 503);
     }
   }
 };
