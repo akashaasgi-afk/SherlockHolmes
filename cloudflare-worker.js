@@ -31,7 +31,7 @@
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-action, x-search",
 };
 
 // ═══ HARDCODED FALLBACKS — never break if env vars missing ═══
