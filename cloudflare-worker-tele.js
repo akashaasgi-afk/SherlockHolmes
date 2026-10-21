@@ -87,7 +87,7 @@ var cloudflare_worker_default = {
       })();
       const stripeKey = env.STRIPE_SECRET_KEY || "";
       return new Response(JSON.stringify({
-        status: "Sherlock Holmes Worker v6.4 — Online ✅",
+        status: "Sherlock Holmes Worker v6.5 — Online ✅",
         time: (/* @__PURE__ */ new Date()).toISOString(),
         supabase_project: supaHost,
         stripe_mode: stripeKey.startsWith("sk_live") || stripeKey.startsWith("rk_live") ? "LIVE" : stripeKey ? "TEST" : "missing",
@@ -98,6 +98,8 @@ var cloudflare_worker_default = {
           supabase_service_key: !!env.SUPABASE_SERVICE_KEY,
           stripe: !!env.STRIPE_SECRET_KEY,
           stripe_webhook_secret: !!env.STRIPE_WEBHOOK_SECRET,
+          stripe_legal_key: !!env.STRIPE_LEGAL_KEY,
+          stripe_legal_webhook: !!env.STRIPE_LEGAL_WEBHOOK_SECRET,
           draw_secret: !!env.DRAW_SECRET,
           resend: !!env.RESEND_API_KEY,
           whatsapp_token: !!env.WHATSAPP_TOKEN,
