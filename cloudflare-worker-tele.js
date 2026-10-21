@@ -87,7 +87,7 @@ var cloudflare_worker_default = {
       })();
       const stripeKey = env.STRIPE_SECRET_KEY || "";
       return new Response(JSON.stringify({
-        status: "Sherlock Holmes Worker v6.5 — Online ✅",
+        status: "Sherlock Holmes Worker v6.6 — Online ✅",
         time: (/* @__PURE__ */ new Date()).toISOString(),
         supabase_project: supaHost,
         stripe_mode: stripeKey.startsWith("sk_live") || stripeKey.startsWith("rk_live") ? "LIVE" : stripeKey ? "TEST" : "missing",
@@ -204,6 +204,23 @@ var cloudflare_worker_default = {
           if (!env.ANTHROPIC_API_KEY) {
             return jsonResponse({ success: false, error: "ANTHROPIC_API_KEY not set in Cloudflare Secrets" }, 500);
           }
+          const siteSessionId = body.session_id ? String(body.session_id).slice(0, 64) : null;
+          const userText = body.text || (body.messages && body.messages.length ? body.messages[body.messages.length - 1].content : "") || "";
+          if (siteSessionId && userText) {
+            // Load history from Supabase for this session
+            const history = await memoryLoad(env, "site:" + siteSessionId, 24 * 7, 30);
+            const system = body.system || "You are Sherlock AI, senior investigator at Sherlock Holmes Investigations Ltd.";
+            // Save user message
+            await memorySave(env, "site", "site:" + siteSessionId, "user", userText);
+            // Build messages array from history + current user message
+            const messages = history.concat([{ role: "user", content: userText }]);
+            const res = await anthropicCall(env, system, messages, body.max_tokens || 1e3);
+            if (!res.ok) return jsonResponse({ success: false, error: res.error }, 500);
+            // Save assistant reply
+            await memorySave(env, "site", "site:" + siteSessionId, "assistant", res.text);
+            return jsonResponse({ success: true, text: res.text });
+          }
+          // Fallback: no session_id — stateless (old behaviour)
           const messages = body.messages || [];
           const system = body.system || "You are Sherlock AI, senior investigator at Sherlock Holmes Investigations Ltd.";
           const res = await anthropicCall(env, system, messages, body.max_tokens || 1e3);
